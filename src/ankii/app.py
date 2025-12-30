@@ -594,12 +594,7 @@ def main():
                         with col_action1:
                             if st.button("🏷️ Tag Selected for Deletion", key="tag_delete_ref"):
                                 if st.session_state["selected_for_deletion"]:
-                                    note_ids = [cards[i].note_id for i in st.session_state["selected_for_deletion"]]
-                                    try:
-                                        anki.add_tags(note_ids, deletion_tag)
-                                        st.success(f"Tagged {len(note_ids)} cards with '{deletion_tag}'")
-                                    except AnkiConnectError as e:
-                                        st.error(f"Error: {e}")
+                                    st.session_state["confirm_action"] = "tag_selected_ref"
                                 else:
                                     st.warning("No cards selected")
 
@@ -613,6 +608,34 @@ def main():
                                 for card_idx, _ in similar:
                                     st.session_state["selected_for_deletion"].add(card_idx)
                                 st.rerun()
+
+                        # Confirmation dialog for tagging selected cards
+                        if st.session_state.get("confirm_action") == "tag_selected_ref":
+                            selected_cards = [cards[i] for i in st.session_state["selected_for_deletion"]]
+                            st.warning("⚠️ **Confirm Action**")
+                            st.markdown(f"""
+**You are about to add the tag `{deletion_tag}` to {len(selected_cards)} cards:**
+
+| # | Front (preview) |
+|---|-----------------|
+""" + "\n".join([f"| {i+1} | {c.front[:50]}... |" for i, c in enumerate(selected_cards[:10])]) +
+(f"\n| ... | *and {len(selected_cards) - 10} more cards* |" if len(selected_cards) > 10 else ""))
+
+                            col_yes, col_no = st.columns(2)
+                            with col_yes:
+                                if st.button("✅ Yes, Tag Them", key="confirm_tag_ref", type="primary"):
+                                    note_ids = [cards[i].note_id for i in st.session_state["selected_for_deletion"]]
+                                    try:
+                                        anki.add_tags(note_ids, deletion_tag)
+                                        st.success(f"Tagged {len(note_ids)} cards with '{deletion_tag}'")
+                                        st.session_state["confirm_action"] = None
+                                        st.rerun()
+                                    except AnkiConnectError as e:
+                                        st.error(f"Error: {e}")
+                            with col_no:
+                                if st.button("❌ No, Cancel", key="cancel_tag_ref"):
+                                    st.session_state["confirm_action"] = None
+                                    st.rerun()
                     else:
                         st.info(f"No similar cards found above {similarity_threshold:.0%} threshold")
 
@@ -723,35 +746,86 @@ def main():
                 st.markdown("---")
                 st.markdown("### Batch Actions")
 
+                # Calculate delete indices for confirmation
+                delete_indices = []
+                for group_idx, group in enumerate(groups):
+                    group_key = f"group_{group_idx}_keep"
+                    keep_idx = st.session_state["group_selections"].get(group_key, group[0])
+                    delete_indices.extend([idx for idx in group if idx != keep_idx])
+
                 col_batch1, col_batch2 = st.columns(2)
 
                 with col_batch1:
                     if st.button("🏷️ Tag All Duplicates for Deletion", type="primary", key="tag_all_duplicates"):
-                        # Recalculate based on current group selections
-                        delete_indices = []
-                        for group_idx, group in enumerate(groups):
-                            group_key = f"group_{group_idx}_keep"
-                            keep_idx = st.session_state["group_selections"].get(group_key, group[0])
-                            delete_indices.extend([idx for idx in group if idx != keep_idx])
-
                         if delete_indices:
-                            note_ids = list(set([cards[i].note_id for i in delete_indices]))
-                            try:
-                                anki.add_tags(note_ids, deletion_tag)
-                                st.success(f"Tagged {len(note_ids)} notes with '{deletion_tag}'")
-                            except AnkiConnectError as e:
-                                st.error(f"Error: {e}")
+                            st.session_state["confirm_action"] = "tag_all_duplicates"
+                            st.session_state["pending_delete_indices"] = delete_indices
                         else:
                             st.info("No duplicates to tag")
 
                 with col_batch2:
                     if st.button("🔄 Remove Deletion Tags", key="remove_tags"):
-                        all_note_ids = [c.note_id for c in cards]
-                        try:
-                            anki.remove_tags(all_note_ids, deletion_tag)
-                            st.success(f"Removed '{deletion_tag}' tag from all cards")
-                        except AnkiConnectError as e:
-                            st.error(f"Error: {e}")
+                        st.session_state["confirm_action"] = "remove_all_tags"
+
+                # Confirmation dialog for tagging all duplicates
+                if st.session_state.get("confirm_action") == "tag_all_duplicates":
+                    pending_indices = st.session_state.get("pending_delete_indices", [])
+                    pending_cards = [cards[i] for i in pending_indices]
+                    note_ids = list(set([c.note_id for c in pending_cards]))
+
+                    st.warning("⚠️ **Confirm Batch Tagging**")
+                    st.markdown(f"""
+**You are about to add the tag `{deletion_tag}` to {len(note_ids)} notes ({len(pending_cards)} cards):**
+
+This action will mark the following cards for deletion:
+
+| # | Front (preview) | Lapses |
+|---|-----------------|--------|
+""" + "\n".join([f"| {i+1} | {c.front[:40]}... | {c.lapses} |" for i, c in enumerate(pending_cards[:15])]) +
+(f"\n| ... | *and {len(pending_cards) - 15} more cards* | |" if len(pending_cards) > 15 else ""))
+
+                    col_yes, col_no = st.columns(2)
+                    with col_yes:
+                        if st.button("✅ Yes, Tag All Duplicates", key="confirm_tag_all", type="primary"):
+                            try:
+                                anki.add_tags(note_ids, deletion_tag)
+                                st.success(f"Tagged {len(note_ids)} notes with '{deletion_tag}'")
+                                st.session_state["confirm_action"] = None
+                                st.session_state["pending_delete_indices"] = None
+                                st.rerun()
+                            except AnkiConnectError as e:
+                                st.error(f"Error: {e}")
+                    with col_no:
+                        if st.button("❌ No, Cancel", key="cancel_tag_all"):
+                            st.session_state["confirm_action"] = None
+                            st.session_state["pending_delete_indices"] = None
+                            st.rerun()
+
+                # Confirmation dialog for removing tags
+                if st.session_state.get("confirm_action") == "remove_all_tags":
+                    all_note_ids = list(set([c.note_id for c in cards]))
+
+                    st.warning("⚠️ **Confirm Tag Removal**")
+                    st.markdown(f"""
+**You are about to remove the tag `{deletion_tag}` from {len(all_note_ids)} notes:**
+
+This will clear the deletion tag from all loaded cards.
+""")
+
+                    col_yes, col_no = st.columns(2)
+                    with col_yes:
+                        if st.button("✅ Yes, Remove Tags", key="confirm_remove_tags", type="primary"):
+                            try:
+                                anki.remove_tags(all_note_ids, deletion_tag)
+                                st.success(f"Removed '{deletion_tag}' tag from all cards")
+                                st.session_state["confirm_action"] = None
+                                st.rerun()
+                            except AnkiConnectError as e:
+                                st.error(f"Error: {e}")
+                    with col_no:
+                        if st.button("❌ No, Cancel", key="cancel_remove_tags"):
+                            st.session_state["confirm_action"] = None
+                            st.rerun()
 
                 # Summary section
                 st.markdown("---")

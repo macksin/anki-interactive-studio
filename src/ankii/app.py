@@ -11,11 +11,13 @@ from ankii.evaluator import CardInfo
 from ankii.embeddings import EmbeddingService, EmbeddingError
 from ankii.llm import OpenRouterClient, LLMError
 from ankii.clustering import (
-    reduce_dimensions, 
-    cluster_embeddings, 
+    reduce_dimensions,
+    cluster_embeddings,
     get_cluster_info,
     find_similar_pairs,
     group_similar_cards,
+    find_similar_to_reference,
+    classify_cards_in_groups,
 )
 
 
@@ -47,6 +49,29 @@ st.markdown("""
     .cluster-header {
         font-size: 1.3em;
         margin-bottom: 16px;
+    }
+    .delete-card {
+        border-left: 4px solid #f44336 !important;
+        background-color: #2d1a1a !important;
+    }
+    .keep-card {
+        border-left: 4px solid #4CAF50 !important;
+        background-color: #1a2d1a !important;
+    }
+    .unique-card {
+        border-left: 4px solid #2196F3 !important;
+        background-color: #1a1a2d !important;
+    }
+    .reference-card {
+        border-left: 4px solid #ff9800 !important;
+        background-color: #2d2a1a !important;
+    }
+    .similarity-badge {
+        background-color: #333;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        margin-left: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -245,7 +270,7 @@ def main():
         col3.metric("Unclustered", cluster_info["n_noise"])
         
         # Tabs for different views
-        tab1, tab2 = st.tabs(["📊 Cluster View", "🔍 Similar Pairs"])
+        tab1, tab2, tab3 = st.tabs(["📊 Cluster View", "🔍 Similar Pairs", "🎯 Suspended Card Matcher"])
         
         with tab1:
             # Plot and details side by side
@@ -459,6 +484,302 @@ def main():
 """
                             st.code(clipboard_text, language="markdown")
                             st.caption("👆 Select all and copy the text above")
+
+        with tab3:
+            st.subheader("Suspended Card Matcher")
+            st.markdown("Find similar cards to suspended cards and manage duplicates")
+
+            # Get embeddings from cache
+            texts = tuple(get_card_text(c) for c in cards)
+            embeddings = compute_embeddings_cached(texts, st.session_state.get("embedding_model", "openai/text-embedding-3-small"))
+
+            # Settings
+            col_settings1, col_settings2 = st.columns(2)
+            with col_settings1:
+                similarity_threshold = st.slider(
+                    "Similarity Threshold",
+                    min_value=0.5,
+                    max_value=0.99,
+                    value=0.80,
+                    step=0.01,
+                    key="suspended_threshold",
+                    help="Cards above this similarity will be grouped together"
+                )
+            with col_settings2:
+                deletion_tag = st.text_input(
+                    "Deletion Tag",
+                    value="to-delete",
+                    key="deletion_tag",
+                    help="Tag to apply to cards marked for deletion"
+                )
+
+            # Find suspended cards in the current set
+            suspended_indices = [i for i, c in enumerate(cards) if "suspended" in str(c.fields).lower() or any("is:suspended" in filter_query for filter_query in [filter_query])]
+
+            # Mode selection
+            mode = st.radio(
+                "Mode",
+                ["🔍 Reference Card Mode", "🗂️ Group All Cards"],
+                horizontal=True,
+                key="matcher_mode"
+            )
+
+            if mode == "🔍 Reference Card Mode":
+                # Reference Card Mode: Select a card and find similar ones
+                st.markdown("---")
+                st.markdown("### Select a Reference Card")
+
+                # Allow selecting any card as reference
+                card_options = {f"{i}: {c.front[:60]}..." if len(c.front) > 60 else f"{i}: {c.front}": i for i, c in enumerate(cards)}
+                selected_card_label = st.selectbox(
+                    "Reference Card",
+                    list(card_options.keys()),
+                    key="reference_card"
+                )
+
+                if selected_card_label:
+                    ref_idx = card_options[selected_card_label]
+                    ref_card = cards[ref_idx]
+
+                    # Show reference card
+                    st.markdown("#### 🎯 Reference Card")
+                    with st.container():
+                        st.markdown(f"**Front:** {ref_card.front}")
+                        st.markdown(f"**Back:** {ref_card.back}")
+                        st.caption(f"Card ID: {ref_card.card_id} | Lapses: {ref_card.lapses} | Reviews: {ref_card.reps}")
+
+                    # Find similar cards
+                    similar = find_similar_to_reference(
+                        embeddings[ref_idx],
+                        embeddings,
+                        threshold=similarity_threshold,
+                        exclude_indices=[ref_idx]
+                    )
+
+                    if similar:
+                        st.markdown(f"#### Found {len(similar)} similar cards")
+
+                        # Initialize session state for selections
+                        if "selected_for_deletion" not in st.session_state:
+                            st.session_state["selected_for_deletion"] = set()
+
+                        # Display similar cards with checkboxes
+                        for card_idx, sim_score in similar:
+                            card = cards[card_idx]
+                            col1, col2 = st.columns([0.1, 0.9])
+
+                            with col1:
+                                is_selected = st.checkbox(
+                                    "🗑️",
+                                    key=f"del_{card_idx}",
+                                    value=card_idx in st.session_state["selected_for_deletion"],
+                                    help="Mark for deletion"
+                                )
+                                if is_selected:
+                                    st.session_state["selected_for_deletion"].add(card_idx)
+                                elif card_idx in st.session_state["selected_for_deletion"]:
+                                    st.session_state["selected_for_deletion"].discard(card_idx)
+
+                            with col2:
+                                status = "🔴 Delete" if card_idx in st.session_state["selected_for_deletion"] else "⚪ Keep"
+                                with st.expander(f"{status} | Similarity: {sim_score:.2%} | {card.front[:50]}..."):
+                                    st.markdown(f"**Front:** {card.front}")
+                                    st.markdown(f"**Back:** {card.back}")
+                                    st.caption(f"Card ID: {card.card_id} | Lapses: {card.lapses} | Reviews: {card.reps}")
+
+                        # Action buttons
+                        st.markdown("---")
+                        col_action1, col_action2, col_action3 = st.columns(3)
+
+                        with col_action1:
+                            if st.button("🏷️ Tag Selected for Deletion", key="tag_delete_ref"):
+                                if st.session_state["selected_for_deletion"]:
+                                    note_ids = [cards[i].note_id for i in st.session_state["selected_for_deletion"]]
+                                    try:
+                                        anki.add_tags(note_ids, deletion_tag)
+                                        st.success(f"Tagged {len(note_ids)} cards with '{deletion_tag}'")
+                                    except AnkiConnectError as e:
+                                        st.error(f"Error: {e}")
+                                else:
+                                    st.warning("No cards selected")
+
+                        with col_action2:
+                            if st.button("🔄 Clear Selection", key="clear_ref"):
+                                st.session_state["selected_for_deletion"] = set()
+                                st.rerun()
+
+                        with col_action3:
+                            if st.button("✅ Select All Similar", key="select_all_ref"):
+                                for card_idx, _ in similar:
+                                    st.session_state["selected_for_deletion"].add(card_idx)
+                                st.rerun()
+                    else:
+                        st.info(f"No similar cards found above {similarity_threshold:.0%} threshold")
+
+            else:
+                # Group All Cards Mode
+                st.markdown("---")
+                st.markdown("### Card Grouping Analysis")
+
+                # Group similar cards
+                groups = group_similar_cards(embeddings, threshold=similarity_threshold)
+                classification = classify_cards_in_groups(groups, len(cards))
+
+                # Stats
+                col_stat1, col_stat2, col_stat3 = st.columns(3)
+                col_stat1.metric("🟢 Keep (First in Group)", len(classification["keep"]))
+                col_stat2.metric("🔴 Duplicates to Delete", len(classification["delete"]))
+                col_stat3.metric("🔵 Unique (No Duplicates)", len(classification["unique"]))
+
+                # Initialize session state for group selections
+                if "group_selections" not in st.session_state:
+                    st.session_state["group_selections"] = {}
+
+                # View mode
+                view_mode = st.radio(
+                    "View",
+                    ["📚 By Groups", "📋 By Classification"],
+                    horizontal=True,
+                    key="group_view_mode"
+                )
+
+                if view_mode == "📚 By Groups":
+                    if groups:
+                        st.markdown(f"#### Found {len(groups)} groups of similar cards")
+
+                        for group_idx, group in enumerate(groups[:30]):  # Limit to 30 groups
+                            with st.expander(f"📚 Group {group_idx + 1} ({len(group)} cards)", expanded=(group_idx < 3)):
+                                # Track which card to keep in this group
+                                group_key = f"group_{group_idx}_keep"
+                                if group_key not in st.session_state["group_selections"]:
+                                    st.session_state["group_selections"][group_key] = group[0]
+
+                                for i, card_idx in enumerate(group):
+                                    card = cards[card_idx]
+                                    keep_this = st.session_state["group_selections"][group_key] == card_idx
+
+                                    col1, col2 = st.columns([0.15, 0.85])
+                                    with col1:
+                                        if st.button(
+                                            "✅" if keep_this else "⬜",
+                                            key=f"keep_{group_idx}_{card_idx}",
+                                            help="Keep this card"
+                                        ):
+                                            st.session_state["group_selections"][group_key] = card_idx
+                                            st.rerun()
+
+                                    with col2:
+                                        status_icon = "🟢 KEEP" if keep_this else "🔴 DELETE"
+                                        st.markdown(f"**{status_icon}** | {card.front[:80]}...")
+                                        st.markdown(f"> {card.back[:100]}..." if len(card.back) > 100 else f"> {card.back}")
+                                        st.caption(f"ID: {card.card_id} | Lapses: {card.lapses}")
+
+                                    if i < len(group) - 1:
+                                        st.divider()
+                    else:
+                        st.info("No duplicate groups found at this threshold. Try lowering it.")
+
+                else:
+                    # By Classification view
+                    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["🔴 To Delete", "🟢 To Keep", "🔵 Unique"])
+
+                    with sub_tab1:
+                        if classification["delete"]:
+                            st.markdown(f"**{len(classification['delete'])} cards marked as duplicates**")
+                            for idx in classification["delete"][:50]:
+                                card = cards[idx]
+                                with st.expander(f"🔴 {card.front[:60]}..."):
+                                    st.markdown(f"**Front:** {card.front}")
+                                    st.markdown(f"**Back:** {card.back}")
+                                    st.caption(f"Card ID: {card.card_id}")
+                        else:
+                            st.info("No duplicates found")
+
+                    with sub_tab2:
+                        if classification["keep"]:
+                            st.markdown(f"**{len(classification['keep'])} cards to keep (first in each group)**")
+                            for idx in classification["keep"][:50]:
+                                card = cards[idx]
+                                with st.expander(f"🟢 {card.front[:60]}..."):
+                                    st.markdown(f"**Front:** {card.front}")
+                                    st.markdown(f"**Back:** {card.back}")
+                                    st.caption(f"Card ID: {card.card_id}")
+                        else:
+                            st.info("No grouped cards found")
+
+                    with sub_tab3:
+                        if classification["unique"]:
+                            st.markdown(f"**{len(classification['unique'])} unique cards (no duplicates)**")
+                            for idx in classification["unique"][:50]:
+                                card = cards[idx]
+                                with st.expander(f"🔵 {card.front[:60]}..."):
+                                    st.markdown(f"**Front:** {card.front}")
+                                    st.markdown(f"**Back:** {card.back}")
+                                    st.caption(f"Card ID: {card.card_id}")
+                        else:
+                            st.info("All cards have duplicates")
+
+                # Batch Actions
+                st.markdown("---")
+                st.markdown("### Batch Actions")
+
+                col_batch1, col_batch2 = st.columns(2)
+
+                with col_batch1:
+                    if st.button("🏷️ Tag All Duplicates for Deletion", type="primary", key="tag_all_duplicates"):
+                        # Recalculate based on current group selections
+                        delete_indices = []
+                        for group_idx, group in enumerate(groups):
+                            group_key = f"group_{group_idx}_keep"
+                            keep_idx = st.session_state["group_selections"].get(group_key, group[0])
+                            delete_indices.extend([idx for idx in group if idx != keep_idx])
+
+                        if delete_indices:
+                            note_ids = list(set([cards[i].note_id for i in delete_indices]))
+                            try:
+                                anki.add_tags(note_ids, deletion_tag)
+                                st.success(f"Tagged {len(note_ids)} notes with '{deletion_tag}'")
+                            except AnkiConnectError as e:
+                                st.error(f"Error: {e}")
+                        else:
+                            st.info("No duplicates to tag")
+
+                with col_batch2:
+                    if st.button("🔄 Remove Deletion Tags", key="remove_tags"):
+                        all_note_ids = [c.note_id for c in cards]
+                        try:
+                            anki.remove_tags(all_note_ids, deletion_tag)
+                            st.success(f"Removed '{deletion_tag}' tag from all cards")
+                        except AnkiConnectError as e:
+                            st.error(f"Error: {e}")
+
+                # Summary section
+                st.markdown("---")
+                st.markdown("### Summary")
+
+                summary_text = f"""## Card Grouping Summary
+**Threshold:** {similarity_threshold:.0%}
+**Total Cards:** {len(cards)}
+**Groups Found:** {len(groups)}
+**Cards to Keep:** {len(classification['keep'])}
+**Cards to Delete:** {len(classification['delete'])}
+**Unique Cards:** {len(classification['unique'])}
+
+### Groups Detail
+"""
+                for group_idx, group in enumerate(groups[:20]):
+                    group_key = f"group_{group_idx}_keep"
+                    keep_idx = st.session_state["group_selections"].get(group_key, group[0])
+                    keep_card = cards[keep_idx]
+                    summary_text += f"\n**Group {group_idx + 1}** ({len(group)} cards)\n"
+                    summary_text += f"- KEEP: {keep_card.front[:50]}...\n"
+                    for idx in group:
+                        if idx != keep_idx:
+                            summary_text += f"- DELETE: {cards[idx].front[:50]}...\n"
+
+                st.code(summary_text, language="markdown")
+                st.caption("👆 Copy the summary above")
+
     else:
         st.info("👈 Select a deck and click **Load & Cluster** to start")
 

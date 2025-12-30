@@ -108,3 +108,39 @@ class AnkiConnect:
         if decks:
             return list(decks.values())[0]
         return {}
+
+    def add_tags(self, note_ids: list[int], tags: str) -> None:
+        """Add tags to notes.
+
+        Args:
+            note_ids: List of note IDs to tag
+            tags: Space-separated tags to add
+        """
+        self._invoke("addTags", notes=note_ids, tags=tags)
+
+    def remove_tags(self, note_ids: list[int], tags: str) -> None:
+        """Remove tags from notes.
+
+        Args:
+            note_ids: List of note IDs to untag
+            tags: Space-separated tags to remove
+        """
+        self._invoke("removeTags", notes=note_ids, tags=tags)
+
+    def suspend_cards(self, card_ids: list[int]) -> None:
+        """Suspend cards."""
+        self._invoke("suspend", cards=card_ids)
+
+    def unsuspend_cards(self, card_ids: list[int]) -> None:
+        """Unsuspend cards."""
+        self._invoke("unsuspend", cards=card_ids)
+
+    def delete_notes(self, note_ids: list[int]) -> None:
+        """Delete notes (and all their cards).
+
+        WARNING: This is irreversible!
+
+        Args:
+            note_ids: List of note IDs to delete
+        """
+        self._invoke("deleteNotes", notes=note_ids)

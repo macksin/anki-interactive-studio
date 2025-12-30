@@ -205,5 +205,84 @@ def group_similar_cards(
     
     # Sort groups by size, largest first
     groups.sort(key=lambda g: -len(g))
-    
+
     return groups
+
+
+def find_similar_to_reference(
+    reference_embedding: np.ndarray,
+    all_embeddings: np.ndarray,
+    threshold: float = 0.8,
+    exclude_indices: list[int] | None = None,
+) -> list[tuple[int, float]]:
+    """Find cards similar to a reference card.
+
+    Args:
+        reference_embedding: Single embedding vector (1D array)
+        all_embeddings: Array of shape (n_samples, embedding_dim)
+        threshold: Minimum cosine similarity to include
+        exclude_indices: Indices to exclude from results (e.g., the reference card itself)
+
+    Returns:
+        List of (card_idx, similarity) tuples, sorted by similarity descending
+    """
+    if exclude_indices is None:
+        exclude_indices = []
+
+    # Normalize reference
+    ref_norm = reference_embedding / (np.linalg.norm(reference_embedding) + 1e-10)
+
+    # Normalize all embeddings
+    norms = np.linalg.norm(all_embeddings, axis=1, keepdims=True)
+    normalized = all_embeddings / (norms + 1e-10)
+
+    # Compute similarities
+    similarities = np.dot(normalized, ref_norm)
+
+    # Find indices above threshold
+    results = []
+    for idx, sim in enumerate(similarities):
+        if idx not in exclude_indices and sim >= threshold:
+            results.append((idx, float(sim)))
+
+    # Sort by similarity descending
+    results.sort(key=lambda x: -x[1])
+    return results
+
+
+def classify_cards_in_groups(
+    groups: list[list[int]],
+    total_cards: int,
+) -> dict[str, list[int]]:
+    """Classify cards into groups: duplicates (to delete) vs unique (new).
+
+    Args:
+        groups: List of groups from group_similar_cards()
+        total_cards: Total number of cards
+
+    Returns:
+        Dict with:
+        - "keep": Indices of cards to keep (first in each group + ungrouped)
+        - "delete": Indices of cards to mark for deletion (duplicates)
+        - "unique": Indices of cards that have no similar matches
+    """
+    all_grouped = set()
+    keep = []
+    delete = []
+
+    for group in groups:
+        if len(group) > 0:
+            # Keep the first card in each group
+            keep.append(group[0])
+            # Mark the rest as duplicates to delete
+            delete.extend(group[1:])
+            all_grouped.update(group)
+
+    # Cards not in any group are unique
+    unique = [i for i in range(total_cards) if i not in all_grouped]
+
+    return {
+        "keep": keep,
+        "delete": delete,
+        "unique": unique,
+    }

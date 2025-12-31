@@ -636,6 +636,188 @@ def main():
                                 if st.button("❌ No, Cancel", key="cancel_tag_ref"):
                                     st.session_state["confirm_action"] = None
                                     st.rerun()
+
+                        # AI Agent Analysis Section
+                        st.markdown("---")
+                        st.markdown("### 🤖 AI Agent Analysis")
+                        st.markdown("Let AI analyze these cards and suggest improvements, merges, or deletions.")
+
+                        if st.button("🧠 Analyze with AI Agent", key="ai_agent_ref", type="secondary"):
+                            # Prepare cards for analysis
+                            all_cards_for_analysis = [
+                                {
+                                    "front": ref_card.front,
+                                    "back": ref_card.back,
+                                    "card_id": ref_card.card_id,
+                                    "note_id": ref_card.note_id,
+                                }
+                            ]
+                            for card_idx, sim_score in similar:
+                                card = cards[card_idx]
+                                all_cards_for_analysis.append({
+                                    "front": card.front,
+                                    "back": card.back,
+                                    "card_id": card.card_id,
+                                    "note_id": card.note_id,
+                                    "similarity": sim_score,
+                                })
+
+                            st.session_state["agent_cards"] = all_cards_for_analysis
+                            st.session_state["agent_card_indices"] = [ref_idx] + [idx for idx, _ in similar]
+                            st.session_state["agent_analyzing"] = True
+                            st.rerun()
+
+                        # Show analysis results if available
+                        if st.session_state.get("agent_analyzing"):
+                            with st.spinner("🤖 AI Agent is analyzing cards..."):
+                                try:
+                                    llm = OpenRouterClient()
+                                    context = f"Deck: {deck}, Similarity threshold: {similarity_threshold:.0%}"
+                                    result = llm.evaluate_and_merge_cards(
+                                        st.session_state["agent_cards"],
+                                        context=context
+                                    )
+                                    st.session_state["agent_result"] = result
+                                    st.session_state["agent_analyzing"] = False
+                                    st.rerun()
+                                except LLMError as e:
+                                    st.error(f"AI Agent Error: {e}")
+                                    st.session_state["agent_analyzing"] = False
+
+                        if st.session_state.get("agent_result"):
+                            result = st.session_state["agent_result"]
+                            agent_cards = st.session_state.get("agent_cards", [])
+                            agent_indices = st.session_state.get("agent_card_indices", [])
+
+                            # Show analysis
+                            st.success("**AI Analysis Complete**")
+                            st.markdown(f"📝 {result.get('analysis', 'Analysis completed.')}")
+
+                            # Summary metrics
+                            summary = result.get("summary", {})
+                            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                            col_s1.metric("Reviewed", summary.get("total_reviewed", len(agent_cards)))
+                            col_s2.metric("To Delete", summary.get("to_delete", 0))
+                            col_s3.metric("To Keep", summary.get("to_keep", 0))
+                            col_s4.metric("New Cards", summary.get("new_cards_created", 0))
+
+                            # Card decisions
+                            st.markdown("#### Card Decisions")
+                            for decision in result.get("card_decisions", []):
+                                idx = decision.get("card_index", 0)
+                                action = decision.get("action", "KEEP")
+                                reason = decision.get("reason", "")
+
+                                if idx < len(agent_cards):
+                                    card_data = agent_cards[idx]
+                                    icon = {"DELETE": "🔴", "KEEP": "🟢", "MERGE": "🟡"}.get(action, "⚪")
+                                    with st.expander(f"{icon} Card {idx + 1}: {action} - {card_data['front'][:40]}..."):
+                                        st.markdown(f"**Front:** {card_data['front']}")
+                                        st.markdown(f"**Back:** {card_data['back']}")
+                                        st.markdown(f"**Decision:** {action}")
+                                        st.markdown(f"**Reason:** {reason}")
+
+                            # New cards to create
+                            if result.get("new_cards"):
+                                st.markdown("#### 📝 New Cards to Create")
+                                for i, new_card in enumerate(result["new_cards"]):
+                                    with st.expander(f"✨ New Card {i + 1}: {new_card['front'][:50]}...", expanded=True):
+                                        st.markdown(f"**Front:** {new_card['front']}")
+                                        st.markdown(f"**Back:** {new_card['back']}")
+                                        source = new_card.get("source_cards", [])
+                                        if source:
+                                            st.caption(f"Created from cards: {', '.join(str(s + 1) for s in source)}")
+                                        st.markdown(f"**Reason:** {new_card.get('reason', 'Improved version')}")
+
+                            # Apply changes section
+                            st.markdown("---")
+                            st.markdown("### Apply Changes")
+
+                            # Confirmation
+                            if st.session_state.get("confirm_action") == "apply_agent_changes":
+                                delete_decisions = [d for d in result.get("card_decisions", []) if d.get("action") in ["DELETE", "MERGE"]]
+                                new_cards_to_create = result.get("new_cards", [])
+
+                                st.warning("⚠️ **Confirm AI Agent Changes**")
+
+                                changes_summary = f"""
+**This will make the following changes:**
+
+🔴 **Tag for Deletion:** {len(delete_decisions)} cards will be tagged with `{deletion_tag}`
+"""
+                                if delete_decisions:
+                                    for d in delete_decisions[:5]:
+                                        idx = d.get("card_index", 0)
+                                        if idx < len(agent_cards):
+                                            changes_summary += f"\n   - {agent_cards[idx]['front'][:40]}..."
+                                    if len(delete_decisions) > 5:
+                                        changes_summary += f"\n   - ...and {len(delete_decisions) - 5} more"
+
+                                changes_summary += f"""
+
+✨ **Create New Cards:** {len(new_cards_to_create)} new cards will be added
+"""
+                                if new_cards_to_create:
+                                    for nc in new_cards_to_create[:3]:
+                                        changes_summary += f"\n   - {nc['front'][:40]}..."
+                                    if len(new_cards_to_create) > 3:
+                                        changes_summary += f"\n   - ...and {len(new_cards_to_create) - 3} more"
+
+                                st.markdown(changes_summary)
+
+                                col_apply, col_cancel = st.columns(2)
+                                with col_apply:
+                                    if st.button("✅ Yes, Apply Changes", key="confirm_apply_agent", type="primary"):
+                                        try:
+                                            # Tag cards for deletion
+                                            notes_to_tag = []
+                                            for d in delete_decisions:
+                                                idx = d.get("card_index", 0)
+                                                if idx < len(agent_cards):
+                                                    notes_to_tag.append(agent_cards[idx]["note_id"])
+
+                                            if notes_to_tag:
+                                                anki.add_tags(list(set(notes_to_tag)), deletion_tag)
+
+                                            # Create new cards
+                                            if new_cards_to_create:
+                                                # Get model info from reference card
+                                                model_name = ref_card.model_name
+                                                for new_card in new_cards_to_create:
+                                                    try:
+                                                        anki.add_note(
+                                                            deck_name=deck,
+                                                            model_name=model_name,
+                                                            fields={"Front": new_card["front"], "Back": new_card["back"]},
+                                                            tags=["ai-generated"],
+                                                        )
+                                                    except AnkiConnectError as e:
+                                                        st.warning(f"Could not create card: {e}")
+
+                                            st.success(f"Applied changes: tagged {len(notes_to_tag)} cards, created {len(new_cards_to_create)} new cards")
+                                            st.session_state["confirm_action"] = None
+                                            st.session_state["agent_result"] = None
+                                            st.rerun()
+                                        except AnkiConnectError as e:
+                                            st.error(f"Error applying changes: {e}")
+
+                                with col_cancel:
+                                    if st.button("❌ No, Cancel", key="cancel_apply_agent"):
+                                        st.session_state["confirm_action"] = None
+                                        st.rerun()
+                            else:
+                                col_apply_btn, col_clear_btn = st.columns(2)
+                                with col_apply_btn:
+                                    if st.button("✅ Apply AI Suggestions", key="apply_agent", type="primary"):
+                                        st.session_state["confirm_action"] = "apply_agent_changes"
+                                        st.rerun()
+                                with col_clear_btn:
+                                    if st.button("🗑️ Clear Results", key="clear_agent"):
+                                        st.session_state["agent_result"] = None
+                                        st.session_state["agent_cards"] = None
+                                        st.session_state["agent_card_indices"] = None
+                                        st.rerun()
+
                     else:
                         st.info(f"No similar cards found above {similarity_threshold:.0%} threshold")
 
@@ -699,6 +881,114 @@ def main():
 
                                     if i < len(group) - 1:
                                         st.divider()
+
+                                # AI Agent button for this group
+                                st.markdown("---")
+                                if st.button(f"🧠 Analyze Group with AI", key=f"ai_group_{group_idx}"):
+                                    group_cards = []
+                                    for card_idx in group:
+                                        card = cards[card_idx]
+                                        group_cards.append({
+                                            "front": card.front,
+                                            "back": card.back,
+                                            "card_id": card.card_id,
+                                            "note_id": card.note_id,
+                                        })
+                                    st.session_state[f"agent_group_{group_idx}_cards"] = group_cards
+                                    st.session_state[f"agent_group_{group_idx}_analyzing"] = True
+                                    st.rerun()
+
+                                # Show analysis for this group
+                                if st.session_state.get(f"agent_group_{group_idx}_analyzing"):
+                                    with st.spinner("🤖 Analyzing group..."):
+                                        try:
+                                            llm = OpenRouterClient()
+                                            result = llm.evaluate_and_merge_cards(
+                                                st.session_state[f"agent_group_{group_idx}_cards"],
+                                                context=f"Deck: {deck}, Group {group_idx + 1}"
+                                            )
+                                            st.session_state[f"agent_group_{group_idx}_result"] = result
+                                            st.session_state[f"agent_group_{group_idx}_analyzing"] = False
+                                            st.rerun()
+                                        except LLMError as e:
+                                            st.error(f"Error: {e}")
+                                            st.session_state[f"agent_group_{group_idx}_analyzing"] = False
+
+                                if st.session_state.get(f"agent_group_{group_idx}_result"):
+                                    result = st.session_state[f"agent_group_{group_idx}_result"]
+                                    group_cards = st.session_state.get(f"agent_group_{group_idx}_cards", [])
+
+                                    st.success("**AI Analysis:**")
+                                    st.markdown(result.get("analysis", ""))
+
+                                    # Show decisions
+                                    for decision in result.get("card_decisions", []):
+                                        idx = decision.get("card_index", 0)
+                                        action = decision.get("action", "KEEP")
+                                        icon = {"DELETE": "🔴", "KEEP": "🟢", "MERGE": "🟡"}.get(action, "⚪")
+                                        st.markdown(f"{icon} Card {idx + 1}: **{action}** - {decision.get('reason', '')}")
+
+                                    # Show new cards
+                                    if result.get("new_cards"):
+                                        st.markdown("**New cards to create:**")
+                                        for nc in result["new_cards"]:
+                                            st.markdown(f"✨ **Q:** {nc['front'][:60]}...")
+                                            st.markdown(f"   **A:** {nc['back'][:60]}...")
+
+                                    # Apply button for this group
+                                    col_g1, col_g2 = st.columns(2)
+                                    with col_g1:
+                                        if st.button("✅ Apply", key=f"apply_group_{group_idx}"):
+                                            st.session_state["confirm_action"] = f"apply_group_{group_idx}"
+                                            st.rerun()
+                                    with col_g2:
+                                        if st.button("🗑️ Clear", key=f"clear_group_{group_idx}"):
+                                            st.session_state[f"agent_group_{group_idx}_result"] = None
+                                            st.rerun()
+
+                                    # Confirmation for applying group changes
+                                    if st.session_state.get("confirm_action") == f"apply_group_{group_idx}":
+                                        delete_decisions = [d for d in result.get("card_decisions", []) if d.get("action") in ["DELETE", "MERGE"]]
+                                        new_cards_list = result.get("new_cards", [])
+
+                                        st.warning(f"⚠️ Apply changes: tag {len(delete_decisions)} cards, create {len(new_cards_list)} new cards?")
+                                        col_yes, col_no = st.columns(2)
+                                        with col_yes:
+                                            if st.button("✅ Yes", key=f"confirm_group_{group_idx}", type="primary"):
+                                                try:
+                                                    # Tag for deletion
+                                                    notes_to_tag = []
+                                                    for d in delete_decisions:
+                                                        idx = d.get("card_index", 0)
+                                                        if idx < len(group_cards):
+                                                            notes_to_tag.append(group_cards[idx]["note_id"])
+                                                    if notes_to_tag:
+                                                        anki.add_tags(list(set(notes_to_tag)), deletion_tag)
+
+                                                    # Create new cards
+                                                    if new_cards_list:
+                                                        first_card = cards[group[0]]
+                                                        for nc in new_cards_list:
+                                                            try:
+                                                                anki.add_note(
+                                                                    deck_name=deck,
+                                                                    model_name=first_card.model_name,
+                                                                    fields={"Front": nc["front"], "Back": nc["back"]},
+                                                                    tags=["ai-generated"],
+                                                                )
+                                                            except AnkiConnectError:
+                                                                pass
+
+                                                    st.success("Applied!")
+                                                    st.session_state["confirm_action"] = None
+                                                    st.session_state[f"agent_group_{group_idx}_result"] = None
+                                                    st.rerun()
+                                                except AnkiConnectError as e:
+                                                    st.error(f"Error: {e}")
+                                        with col_no:
+                                            if st.button("❌ No", key=f"cancel_group_{group_idx}"):
+                                                st.session_state["confirm_action"] = None
+                                                st.rerun()
                     else:
                         st.info("No duplicate groups found at this threshold. Try lowering it.")
 

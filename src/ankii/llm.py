@@ -191,3 +191,152 @@ Please provide:
 Keep your response concise and actionable."""
 
         return self._chat([{"role": "user", "content": prompt}])
+
+    def evaluate_and_merge_cards(
+        self,
+        cards: list[dict[str, str]],
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Multi-agent evaluation: analyze cards and propose actions.
+
+        This uses a chain-of-thought approach to:
+        1. Evaluate each card for quality and accuracy
+        2. Identify duplicates and overlapping content
+        3. Propose merging, deletion, or improvement actions
+        4. Generate new optimized cards
+
+        Args:
+            cards: List of dicts with 'front', 'back', and optionally 'card_id', 'note_id'
+            context: Additional context about the cards (deck name, filter, etc.)
+
+        Returns:
+            Dict with:
+            - analysis: Overall analysis text
+            - cards_to_delete: List of indices of cards to mark for deletion
+            - cards_to_keep: List of indices of cards to keep as-is
+            - new_cards: List of new card dicts with 'front' and 'back'
+            - reasoning: Explanation for each decision
+        """
+        import json
+
+        cards_text = "\n\n".join([
+            f"**Card {i+1}** (ID: {c.get('card_id', 'N/A')}):\n- Front: {c['front']}\n- Back: {c['back']}"
+            for i, c in enumerate(cards)
+        ])
+
+        prompt = f"""You are an expert flashcard optimizer using spaced repetition best practices.
+
+## Your Task
+Analyze the following group of similar Anki flashcards and determine the optimal action for each.
+
+## Context
+{context if context else "These cards were grouped by semantic similarity."}
+
+## Cards to Analyze
+
+{cards_text}
+
+## Evaluation Criteria
+
+For each card, evaluate:
+1. **Factual Accuracy**: Is the information correct?
+2. **Atomicity**: Does it test exactly ONE concept? (Cards should be atomic)
+3. **Clarity**: Is the question unambiguous?
+4. **Redundancy**: Does it duplicate another card's content?
+5. **Effectiveness**: Will this help long-term retention?
+
+## Best Practices for Flashcards
+- One concept per card (atomic)
+- Clear, unambiguous questions
+- Concise but complete answers
+- No trick questions
+- Test understanding, not memorization of exact wording
+
+## Actions You Can Take
+
+For each card, choose ONE action:
+- **KEEP**: Card is good as-is
+- **DELETE**: Card is redundant, incorrect, or low quality
+- **MERGE**: Combine with other cards into a better version
+
+If cards should be MERGED or improved, create NEW cards that:
+- Follow all best practices
+- Preserve the important information
+- Are better than the originals
+
+## Response Format
+
+Respond with ONLY valid JSON in this exact format:
+```json
+{{
+    "analysis": "<2-3 sentence summary of what you found>",
+    "card_decisions": [
+        {{
+            "card_index": 0,
+            "action": "DELETE|KEEP|MERGE",
+            "reason": "<brief explanation>"
+        }}
+    ],
+    "new_cards": [
+        {{
+            "front": "<question>",
+            "back": "<answer>",
+            "source_cards": [0, 1],
+            "reason": "<why this new card is better>"
+        }}
+    ],
+    "summary": {{
+        "total_reviewed": <number>,
+        "to_delete": <number>,
+        "to_keep": <number>,
+        "new_cards_created": <number>
+    }}
+}}
+```
+
+Important:
+- card_index is 0-based (first card is 0)
+- source_cards lists which original cards this new card replaces/combines
+- If no new cards needed, use empty array: "new_cards": []
+- Be conservative: only DELETE truly bad/redundant cards
+- Be helpful: create better cards when merging is beneficial"""
+
+        response = self._chat([{"role": "user", "content": prompt}])
+
+        # Parse JSON response
+        try:
+            text = response.strip()
+            # Handle markdown code blocks
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+
+            result = json.loads(text.strip())
+
+            # Validate and normalize response
+            if "card_decisions" not in result:
+                result["card_decisions"] = []
+            if "new_cards" not in result:
+                result["new_cards"] = []
+            if "analysis" not in result:
+                result["analysis"] = "Analysis completed."
+            if "summary" not in result:
+                result["summary"] = {
+                    "total_reviewed": len(cards),
+                    "to_delete": len([d for d in result["card_decisions"] if d.get("action") == "DELETE"]),
+                    "to_keep": len([d for d in result["card_decisions"] if d.get("action") == "KEEP"]),
+                    "new_cards_created": len(result["new_cards"]),
+                }
+
+            return result
+
+        except json.JSONDecodeError as e:
+            return {
+                "analysis": "Failed to parse LLM response. Please try again.",
+                "card_decisions": [],
+                "new_cards": [],
+                "summary": {"total_reviewed": len(cards), "to_delete": 0, "to_keep": len(cards), "new_cards_created": 0},
+                "error": str(e),
+                "raw_response": response,
+            }

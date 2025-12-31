@@ -144,3 +144,71 @@ class AnkiConnect:
             note_ids: List of note IDs to delete
         """
         self._invoke("deleteNotes", notes=note_ids)
+
+    def get_model_names(self) -> list[str]:
+        """Get list of all note type (model) names."""
+        return self._invoke("modelNames")
+
+    def get_model_field_names(self, model_name: str) -> list[str]:
+        """Get field names for a note type."""
+        return self._invoke("modelFieldNames", modelName=model_name)
+
+    def add_note(
+        self,
+        deck_name: str,
+        model_name: str,
+        fields: dict[str, str],
+        tags: list[str] | None = None,
+    ) -> int:
+        """Create a new note with a card.
+
+        Args:
+            deck_name: Name of the deck to add to
+            model_name: Note type name (e.g., "Basic", "Cloze")
+            fields: Dict mapping field names to values
+            tags: Optional list of tags
+
+        Returns:
+            The new note ID
+        """
+        note = {
+            "deckName": deck_name,
+            "modelName": model_name,
+            "fields": fields,
+            "tags": tags or [],
+            "options": {
+                "allowDuplicate": False,
+                "duplicateScope": "deck",
+            },
+        }
+        return self._invoke("addNote", note=note)
+
+    def add_notes(
+        self,
+        deck_name: str,
+        model_name: str,
+        notes_data: list[dict[str, Any]],
+    ) -> list[int | None]:
+        """Create multiple notes at once.
+
+        Args:
+            deck_name: Name of the deck to add to
+            model_name: Note type name
+            notes_data: List of dicts with 'fields' and optionally 'tags'
+
+        Returns:
+            List of note IDs (None for failed notes)
+        """
+        notes = []
+        for data in notes_data:
+            notes.append({
+                "deckName": deck_name,
+                "modelName": model_name,
+                "fields": data["fields"],
+                "tags": data.get("tags", []),
+                "options": {
+                    "allowDuplicate": False,
+                    "duplicateScope": "deck",
+                },
+            })
+        return self._invoke("addNotes", notes=notes)

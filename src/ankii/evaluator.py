@@ -22,18 +22,34 @@ class CardInfo:
     lapses: int
     reps: int
     fields: dict[str, str]
-    
+    tags: list[str] = None
+
+    def __post_init__(self):
+        if self.tags is None:
+            self.tags = []
+
+    def has_tag(self, tag: str) -> bool:
+        """Check if card has a specific tag (case-insensitive)."""
+        tag_lower = tag.lower()
+        return any(t.lower() == tag_lower for t in self.tags)
+
     @classmethod
     def from_anki_info(cls, info: dict[str, Any]) -> "CardInfo":
         """Create from AnkiConnect cardsInfo response."""
         # Extract text from HTML
         front = strip_html(info.get("question", ""))
         back = strip_html(info.get("answer", ""))
-        
+
         # Clean up the back - it often contains the front
         if front and back.startswith(front):
             back = back[len(front):].strip()
-        
+
+        # Get tags - they may be in different places depending on API version
+        tags = info.get("tags", [])
+        if not tags and "note" in info:
+            # Sometimes tags are nested under note info
+            tags = info.get("note", {}).get("tags", [])
+
         return cls(
             card_id=info["cardId"],
             note_id=info["note"],
@@ -44,6 +60,7 @@ class CardInfo:
             lapses=info.get("lapses", 0),
             reps=info.get("reps", 0),
             fields={name: val["value"] for name, val in info.get("fields", {}).items()},
+            tags=tags,
         )
 
 

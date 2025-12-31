@@ -116,6 +116,24 @@ def compute_embeddings_cached(texts: tuple[str, ...], model: str) -> np.ndarray:
     return service.get_embeddings_batch(list(texts))
 
 
+def trigger_reload():
+    """Clear session state to trigger a reload of cards."""
+    # Clear card-related session state to force reload
+    keys_to_clear = [
+        "cards", "cards_df", "cluster_info",
+        "selected_for_deletion", "agent_result", "agent_cards",
+        "agent_card_indices", "agent_single_result", "agent_single_card",
+        "confirm_action", "group_selections"
+    ]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    # Also clear any group-specific keys
+    for key in list(st.session_state.keys()):
+        if key.startswith("agent_group_"):
+            del st.session_state[key]
+
+
 def main():
     st.title("🎴 Anki Card Clusters")
     st.markdown("Visualize similar cards using AI embeddings")
@@ -589,17 +607,32 @@ def main():
                     # Show reference card
                     st.markdown("#### 🎯 Reference Card")
                     with st.container():
+                        # Warn if reference card already has deletion tag
+                        if ref_card.has_tag(deletion_tag):
+                            st.warning(f"⚠️ This card already has the `{deletion_tag}` tag")
                         st.markdown(f"**Front:** {ref_card.front}")
                         st.markdown(f"**Back:** {ref_card.back}")
                         st.caption(f"Card ID: {ref_card.card_id} | Lapses: {ref_card.lapses} | Reviews: {ref_card.reps}")
 
-                    # Find similar cards
-                    similar = find_similar_to_reference(
+                    # Find similar cards (excluding those already tagged for deletion)
+                    similar_raw = find_similar_to_reference(
                         embeddings[ref_idx],
                         embeddings,
                         threshold=similarity_threshold,
                         exclude_indices=[ref_idx]
                     )
+
+                    # Filter out cards that already have the deletion tag
+                    similar = [
+                        (card_idx, sim_score)
+                        for card_idx, sim_score in similar_raw
+                        if not cards[card_idx].has_tag(deletion_tag)
+                    ]
+
+                    # Show count of filtered cards if any
+                    filtered_count = len(similar_raw) - len(similar)
+                    if filtered_count > 0:
+                        st.info(f"ℹ️ {filtered_count} similar cards already have `{deletion_tag}` tag and are hidden")
 
                     if similar:
                         st.markdown(f"#### Found {len(similar)} similar cards")
@@ -672,8 +705,9 @@ def main():
                                     note_ids = [cards[i].note_id for i in st.session_state["selected_for_deletion"]]
                                     try:
                                         anki.add_tags(note_ids, deletion_tag)
-                                        st.success(f"Tagged {len(note_ids)} cards with '{deletion_tag}'")
-                                        st.session_state["confirm_action"] = None
+                                        st.success(f"✅ Tagged {len(note_ids)} cards with '{deletion_tag}'")
+                                        st.info("🔄 Reloading to reflect changes...")
+                                        trigger_reload()
                                         st.rerun()
                                     except AnkiConnectError as e:
                                         st.error(f"Error: {e}")
@@ -853,8 +887,8 @@ def main():
                                                         st.warning(f"Could not create card: {e}")
 
                                             st.success(f"✅ Done: Tagged {len(notes_to_tag)} cards with '{deletion_tag}', created {created_count} new cards")
-                                            st.session_state["confirm_action"] = None
-                                            st.session_state["agent_result"] = None
+                                            st.info("🔄 Reloading to reflect changes...")
+                                            trigger_reload()
                                             st.rerun()
                                         except AnkiConnectError as e:
                                             st.error(f"Error applying changes: {e}")
@@ -1005,10 +1039,10 @@ def main():
 
                                             if should_tag_original or created_count > 0:
                                                 st.success(f"✅ Done: Tagged original with '{deletion_tag}', created {created_count} new card(s)")
+                                                st.info("🔄 Reloading to reflect changes...")
+                                                trigger_reload()
                                             else:
                                                 st.success("✅ No changes were needed!")
-                                            st.session_state["confirm_action"] = None
-                                            st.session_state["agent_single_result"] = None
                                             st.rerun()
                                         except AnkiConnectError as e:
                                             st.error(f"Error applying changes: {e}")
@@ -1035,7 +1069,27 @@ def main():
                 st.markdown("### Card Grouping Analysis")
 
                 # Group similar cards
-                groups = group_similar_cards(embeddings, threshold=similarity_threshold)
+                groups_raw = group_similar_cards(embeddings, threshold=similarity_threshold)
+
+                # Filter out groups where all cards already have deletion tag
+                groups = []
+                filtered_group_count = 0
+                for group in groups_raw:
+                    # Keep group if at least one card doesn't have deletion tag
+                    untagged_cards = [idx for idx in group if not cards[idx].has_tag(deletion_tag)]
+                    if untagged_cards:
+                        # Only include untagged cards in the group
+                        if len(untagged_cards) > 1:
+                            groups.append(untagged_cards)
+                        elif len(untagged_cards) == 1 and len(group) > 1:
+                            # Single untagged card in group with tagged cards - skip
+                            filtered_group_count += 1
+                    else:
+                        filtered_group_count += 1
+
+                if filtered_group_count > 0:
+                    st.info(f"ℹ️ {filtered_group_count} groups already fully processed (all cards have `{deletion_tag}` tag)")
+
                 classification = classify_cards_in_groups(groups, len(cards))
 
                 # Stats
@@ -1206,8 +1260,8 @@ def main():
                                                                 pass
 
                                                     st.success(f"✅ Done: Tagged {len(notes_to_tag)} cards, created {created_count} new cards")
-                                                    st.session_state["confirm_action"] = None
-                                                    st.session_state[f"agent_group_{group_idx}_result"] = None
+                                                    st.info("🔄 Reloading to reflect changes...")
+                                                    trigger_reload()
                                                     st.rerun()
                                                 except AnkiConnectError as e:
                                                     st.error(f"Error: {e}")
@@ -1305,9 +1359,9 @@ This action will mark the following cards for deletion:
                         if st.button("✅ Yes, Tag All Duplicates", key="confirm_tag_all", type="primary"):
                             try:
                                 anki.add_tags(note_ids, deletion_tag)
-                                st.success(f"Tagged {len(note_ids)} notes with '{deletion_tag}'")
-                                st.session_state["confirm_action"] = None
-                                st.session_state["pending_delete_indices"] = None
+                                st.success(f"✅ Tagged {len(note_ids)} notes with '{deletion_tag}'")
+                                st.info("🔄 Reloading to reflect changes...")
+                                trigger_reload()
                                 st.rerun()
                             except AnkiConnectError as e:
                                 st.error(f"Error: {e}")
@@ -1333,8 +1387,9 @@ This will clear the deletion tag from all loaded cards.
                         if st.button("✅ Yes, Remove Tags", key="confirm_remove_tags", type="primary"):
                             try:
                                 anki.remove_tags(all_note_ids, deletion_tag)
-                                st.success(f"Removed '{deletion_tag}' tag from all cards")
-                                st.session_state["confirm_action"] = None
+                                st.success(f"✅ Removed '{deletion_tag}' tag from all cards")
+                                st.info("🔄 Reloading to reflect changes...")
+                                trigger_reload()
                                 st.rerun()
                             except AnkiConnectError as e:
                                 st.error(f"Error: {e}")

@@ -18,14 +18,37 @@ DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 # Pricing per 1M tokens (input, output) - update as needed
 # Source: https://openrouter.ai/models
 MODEL_PRICING = {
+    # Google models
     "google/gemini-2.0-flash-001": (0.1, 0.4),
+    "google/gemini-2.5-flash-preview": (0.15, 0.6),
+    # ZhipuAI GLM models
+    "zhipu/glm-4-flash": (0.007, 0.007),
+    "zhipu/glm-4-long": (0.07, 0.07),
+    "zhipu/glm-4-plus": (0.35, 0.35),
+    # OpenAI models
     "openai/gpt-4o-mini": (0.15, 0.6),
     "openai/gpt-4o": (2.5, 10.0),
+    # Anthropic models
     "anthropic/claude-3-haiku": (0.25, 1.25),
-    "anthropic/claude-3-sonnet": (3.0, 15.0),
+    "anthropic/claude-3.5-sonnet": (3.0, 15.0),
     "anthropic/claude-3-opus": (15.0, 75.0),
-    "meta-llama/llama-3-70b-instruct": (0.59, 0.79),
+    # Open source models
+    "meta-llama/llama-3.3-70b-instruct": (0.3, 0.3),
     "mistralai/mistral-7b-instruct": (0.06, 0.06),
+    "deepseek/deepseek-chat-v3": (0.14, 0.28),
+}
+
+# Available models for UI selection (name -> model_id)
+AVAILABLE_MODELS = {
+    "Gemini 2.0 Flash (fast, cheap)": "google/gemini-2.0-flash-001",
+    "Gemini 2.5 Flash Preview": "google/gemini-2.5-flash-preview",
+    "GLM-4 Flash (very cheap)": "zhipu/glm-4-flash",
+    "GLM-4 Plus (better quality)": "zhipu/glm-4-plus",
+    "GPT-4o Mini": "openai/gpt-4o-mini",
+    "GPT-4o": "openai/gpt-4o",
+    "Claude 3.5 Sonnet": "anthropic/claude-3.5-sonnet",
+    "Llama 3.3 70B": "meta-llama/llama-3.3-70b-instruct",
+    "DeepSeek V3": "deepseek/deepseek-chat-v3",
 }
 
 # Default pricing if model not in list

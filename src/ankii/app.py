@@ -9,7 +9,7 @@ import numpy as np
 from ankii.anki_connect import AnkiConnect, AnkiConnectError
 from ankii.evaluator import CardInfo
 from ankii.embeddings import EmbeddingService, EmbeddingError
-from ankii.llm import OpenRouterClient, LLMError, get_session_usage, reset_session_usage
+from ankii.llm import OpenRouterClient, LLMError, get_session_usage, reset_session_usage, AVAILABLE_MODELS, MODEL_PRICING
 from ankii.clustering import (
     reduce_dimensions,
     cluster_embeddings,
@@ -198,7 +198,24 @@ def main():
             "Embedding model",
             ["openai/text-embedding-3-small", "openai/text-embedding-3-large"],
         )
-        
+
+        st.divider()
+
+        # LLM model for AI Agent
+        st.subheader("🤖 AI Agent Model")
+        llm_model_name = st.selectbox(
+            "LLM Model",
+            list(AVAILABLE_MODELS.keys()),
+            index=0,
+            help="Model used for AI card analysis"
+        )
+        llm_model_id = AVAILABLE_MODELS[llm_model_name]
+        st.session_state["llm_model"] = llm_model_id
+
+        # Show pricing for selected model
+        input_price, output_price = MODEL_PRICING.get(llm_model_id, (1.0, 2.0))
+        st.caption(f"💵 ${input_price}/M in, ${output_price}/M out")
+
         # Load button
         load_btn = st.button("🔄 Load & Cluster", type="primary", use_container_width=True)
 
@@ -372,7 +389,7 @@ def main():
                         ]
                         with st.spinner("Analyzing cluster with LLM..."):
                             try:
-                                llm = OpenRouterClient()
+                                llm = OpenRouterClient(model=st.session_state.get("llm_model", "google/gemini-2.0-flash-001"))
                                 # Extract filter name from the label
                                 current_filter = filter_label.split(" (")[0] if " (" in filter_label else filter_label
                                 analysis = llm.analyze_card_group(
@@ -464,7 +481,7 @@ def main():
                             ]
                             with st.spinner("Analyzing similar cards..."):
                                 try:
-                                    llm = OpenRouterClient()
+                                    llm = OpenRouterClient(model=st.session_state.get("llm_model", "google/gemini-2.0-flash-001"))
                                     current_filter = filter_label.split(" (")[0] if " (" in filter_label else filter_label
                                     analysis = llm.analyze_card_group(
                                         card_dicts,
@@ -699,7 +716,7 @@ def main():
                         if st.session_state.get("agent_analyzing"):
                             with st.spinner("🤖 AI Agent is analyzing cards..."):
                                 try:
-                                    llm = OpenRouterClient()
+                                    llm = OpenRouterClient(model=st.session_state.get("llm_model", "google/gemini-2.0-flash-001"))
                                     context = f"Deck: {deck}, Similarity threshold: {similarity_threshold:.0%}"
                                     result = llm.evaluate_and_merge_cards(
                                         st.session_state["agent_cards"],
@@ -930,7 +947,7 @@ def main():
                                 if st.session_state.get(f"agent_group_{group_idx}_analyzing"):
                                     with st.spinner("🤖 Analyzing group..."):
                                         try:
-                                            llm = OpenRouterClient()
+                                            llm = OpenRouterClient(model=st.session_state.get("llm_model", "google/gemini-2.0-flash-001"))
                                             result = llm.evaluate_and_merge_cards(
                                                 st.session_state[f"agent_group_{group_idx}_cards"],
                                                 context=f"Deck: {deck}, Group {group_idx + 1}"

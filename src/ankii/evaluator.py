@@ -44,11 +44,8 @@ class CardInfo:
         if front and back.startswith(front):
             back = back[len(front):].strip()
 
-        # Get tags - they may be in different places depending on API version
+        # Get tags - they are directly on the card info from cardsInfo API
         tags = info.get("tags", [])
-        if not tags and "note" in info:
-            # Sometimes tags are nested under note info
-            tags = info.get("note", {}).get("tags", [])
 
         return cls(
             card_id=info["cardId"],

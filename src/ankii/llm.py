@@ -18,13 +18,13 @@ DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 # Pricing per 1M tokens (input, output) - update as needed
 # Source: https://openrouter.ai/models
 MODEL_PRICING = {
-    # Google models
+    # Google Gemini models
     "google/gemini-2.0-flash-001": (0.1, 0.4),
-    "google/gemini-2.5-flash-preview": (0.15, 0.6),
-    # ZhipuAI GLM models
-    "zhipu/glm-4-flash": (0.007, 0.007),
-    "zhipu/glm-4-long": (0.07, 0.07),
-    "zhipu/glm-4-plus": (0.35, 0.35),
+    "google/gemini-2.5-flash": (0.30, 2.50),
+    "google/gemini-3-flash-preview": (0.50, 3.0),
+    # Z.AI GLM models (formerly ZhipuAI)
+    "z-ai/glm-4.7": (0.40, 1.50),
+    "z-ai/glm-4.6": (0.20, 0.80),
     # OpenAI models
     "openai/gpt-4o-mini": (0.15, 0.6),
     "openai/gpt-4o": (2.5, 10.0),
@@ -40,10 +40,11 @@ MODEL_PRICING = {
 
 # Available models for UI selection (name -> model_id)
 AVAILABLE_MODELS = {
+    "Gemini 3 Flash Preview (newest)": "google/gemini-3-flash-preview",
+    "Gemini 2.5 Flash": "google/gemini-2.5-flash",
     "Gemini 2.0 Flash (fast, cheap)": "google/gemini-2.0-flash-001",
-    "Gemini 2.5 Flash Preview": "google/gemini-2.5-flash-preview",
-    "GLM-4 Flash (very cheap)": "zhipu/glm-4-flash",
-    "GLM-4 Plus (better quality)": "zhipu/glm-4-plus",
+    "GLM-4.7 (Z.AI flagship)": "z-ai/glm-4.7",
+    "GLM-4.6": "z-ai/glm-4.6",
     "GPT-4o Mini": "openai/gpt-4o-mini",
     "GPT-4o": "openai/gpt-4o",
     "Claude 3.5 Sonnet": "anthropic/claude-3.5-sonnet",

@@ -3,6 +3,7 @@
 import os
 import httpx
 from typing import Any
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -12,7 +13,57 @@ load_dotenv()
 
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "z-ai/glm-4.7"
+DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+
+# Pricing per 1M tokens (input, output) - update as needed
+# Source: https://openrouter.ai/models
+MODEL_PRICING = {
+    "google/gemini-2.0-flash-001": (0.1, 0.4),
+    "openai/gpt-4o-mini": (0.15, 0.6),
+    "openai/gpt-4o": (2.5, 10.0),
+    "anthropic/claude-3-haiku": (0.25, 1.25),
+    "anthropic/claude-3-sonnet": (3.0, 15.0),
+    "anthropic/claude-3-opus": (15.0, 75.0),
+    "meta-llama/llama-3-70b-instruct": (0.59, 0.79),
+    "mistralai/mistral-7b-instruct": (0.06, 0.06),
+}
+
+# Default pricing if model not in list
+DEFAULT_PRICING = (1.0, 2.0)  # $1/M input, $2/M output
+
+
+@dataclass
+class UsageStats:
+    """Track API usage and costs."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    total_cost: float = 0.0
+    request_count: int = 0
+
+    def add_usage(self, prompt: int, completion: int, cost: float) -> None:
+        """Add usage from a request."""
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.total_tokens += prompt + completion
+        self.total_cost += cost
+        self.request_count += 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "total_cost": self.total_cost,
+            "request_count": self.request_count,
+        }
+
+    def format_cost(self) -> str:
+        """Format cost as string."""
+        if self.total_cost < 0.01:
+            return f"${self.total_cost:.4f}"
+        return f"${self.total_cost:.2f}"
 
 
 class LLMError(Exception):
@@ -20,9 +71,24 @@ class LLMError(Exception):
     pass
 
 
+# Global usage tracker for session
+_session_usage = UsageStats()
+
+
+def get_session_usage() -> UsageStats:
+    """Get the global session usage stats."""
+    return _session_usage
+
+
+def reset_session_usage() -> None:
+    """Reset the global session usage stats."""
+    global _session_usage
+    _session_usage = UsageStats()
+
+
 class OpenRouterClient:
     """Client for the OpenRouter API."""
-    
+
     def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL):
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:
@@ -31,7 +97,15 @@ class OpenRouterClient:
                 "Set OPENROUTER_API_KEY environment variable or pass api_key."
             )
         self.model = model
-    
+        self.last_usage: dict[str, Any] | None = None
+
+    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Calculate cost based on token usage."""
+        input_price, output_price = MODEL_PRICING.get(self.model, DEFAULT_PRICING)
+        input_cost = (prompt_tokens / 1_000_000) * input_price
+        output_cost = (completion_tokens / 1_000_000) * output_price
+        return input_cost + output_cost
+
     def _chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         """Make a chat completion request."""
         headers = {
@@ -40,29 +114,46 @@ class OpenRouterClient:
             "HTTP-Referer": "https://github.com/ankii",
             "X-Title": "Anki Card Reviewer",
         }
-        
+
         payload = {
             "model": self.model,
             "messages": messages,
             **kwargs,
         }
-        
+
         try:
             response = httpx.post(
-                OPENROUTER_URL, 
-                json=payload, 
+                OPENROUTER_URL,
+                json=payload,
                 headers=headers,
                 timeout=60.0
             )
             response.raise_for_status()
         except httpx.HTTPError as e:
             raise LLMError(f"OpenRouter API error: {e}")
-        
+
         result = response.json()
-        
+
         if "error" in result:
             raise LLMError(f"OpenRouter error: {result['error']}")
-        
+
+        # Track usage
+        usage = result.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        cost = self._calculate_cost(prompt_tokens, completion_tokens)
+
+        self.last_usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "cost": cost,
+            "model": self.model,
+        }
+
+        # Add to global session tracker
+        _session_usage.add_usage(prompt_tokens, completion_tokens, cost)
+
         return result["choices"][0]["message"]["content"]
     
     def evaluate_card(self, front: str, back: str, card_type: str = "basic") -> dict[str, Any]:

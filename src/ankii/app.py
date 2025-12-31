@@ -9,7 +9,7 @@ import numpy as np
 from ankii.anki_connect import AnkiConnect, AnkiConnectError
 from ankii.evaluator import CardInfo
 from ankii.embeddings import EmbeddingService, EmbeddingError
-from ankii.llm import OpenRouterClient, LLMError
+from ankii.llm import OpenRouterClient, LLMError, get_session_usage, reset_session_usage
 from ankii.clustering import (
     reduce_dimensions,
     cluster_embeddings,
@@ -201,7 +201,35 @@ def main():
         
         # Load button
         load_btn = st.button("🔄 Load & Cluster", type="primary", use_container_width=True)
-    
+
+        st.divider()
+
+        # Cost Counter Section
+        st.subheader("💰 API Usage")
+        usage = get_session_usage()
+
+        # Display metrics
+        col_cost1, col_cost2 = st.columns(2)
+        with col_cost1:
+            st.metric("Cost", usage.format_cost())
+        with col_cost2:
+            st.metric("Requests", usage.request_count)
+
+        # Expandable details
+        with st.expander("Usage Details"):
+            st.markdown(f"""
+| Metric | Value |
+|--------|-------|
+| Prompt Tokens | {usage.prompt_tokens:,} |
+| Completion Tokens | {usage.completion_tokens:,} |
+| Total Tokens | {usage.total_tokens:,} |
+| Total Cost | {usage.format_cost()} |
+| API Calls | {usage.request_count} |
+""")
+            if st.button("🔄 Reset Counter", key="reset_cost"):
+                reset_session_usage()
+                st.rerun()
+
     # Main content
     if load_btn or "cards_df" in st.session_state:
         if load_btn:

@@ -783,24 +783,34 @@ def main():
                                 delete_decisions = [d for d in result.get("card_decisions", []) if d.get("action") in ["DELETE", "MERGE"]]
                                 new_cards_to_create = result.get("new_cards", [])
 
+                                # Collect ALL cards that should be tagged for deletion:
+                                # 1. Cards with DELETE or MERGE action
+                                # 2. Cards listed as source_cards for any new card
+                                cards_to_tag_indices = set()
+                                for d in delete_decisions:
+                                    cards_to_tag_indices.add(d.get("card_index", 0))
+                                for nc in new_cards_to_create:
+                                    for source_idx in nc.get("source_cards", []):
+                                        cards_to_tag_indices.add(source_idx)
+
+                                cards_to_tag = [agent_cards[idx] for idx in cards_to_tag_indices if idx < len(agent_cards)]
+
                                 st.warning("⚠️ **Confirm AI Agent Changes**")
 
                                 changes_summary = f"""
-**This will make the following changes:**
+**The following changes will be made:**
 
-🔴 **Tag for Deletion:** {len(delete_decisions)} cards will be tagged with `{deletion_tag}`
+🔴 **Mark for Deletion:** {len(cards_to_tag)} cards will be tagged with `{deletion_tag}`
 """
-                                if delete_decisions:
-                                    for d in delete_decisions[:5]:
-                                        idx = d.get("card_index", 0)
-                                        if idx < len(agent_cards):
-                                            changes_summary += f"\n   - {agent_cards[idx]['front'][:40]}..."
-                                    if len(delete_decisions) > 5:
-                                        changes_summary += f"\n   - ...and {len(delete_decisions) - 5} more"
+                                if cards_to_tag:
+                                    for c in cards_to_tag[:5]:
+                                        changes_summary += f"\n   - {c['front'][:40]}..."
+                                    if len(cards_to_tag) > 5:
+                                        changes_summary += f"\n   - ...and {len(cards_to_tag) - 5} more"
 
                                 changes_summary += f"""
 
-✨ **Create New Cards:** {len(new_cards_to_create)} new cards will be added
+✨ **Create New Cards:** {len(new_cards_to_create)} improved cards will replace them
 """
                                 if new_cards_to_create:
                                     for nc in new_cards_to_create[:3]:
@@ -808,23 +818,25 @@ def main():
                                     if len(new_cards_to_create) > 3:
                                         changes_summary += f"\n   - ...and {len(new_cards_to_create) - 3} more"
 
+                                changes_summary += f"""
+
+⚠️ Old cards will be tagged `{deletion_tag}` for manual review before permanent deletion.
+"""
+
                                 st.markdown(changes_summary)
 
                                 col_apply, col_cancel = st.columns(2)
                                 with col_apply:
                                     if st.button("✅ Yes, Apply Changes", key="confirm_apply_agent", type="primary"):
                                         try:
-                                            # Tag cards for deletion
-                                            notes_to_tag = []
-                                            for d in delete_decisions:
-                                                idx = d.get("card_index", 0)
-                                                if idx < len(agent_cards):
-                                                    notes_to_tag.append(agent_cards[idx]["note_id"])
+                                            # Tag ALL source/affected cards for deletion
+                                            notes_to_tag = list(set([c["note_id"] for c in cards_to_tag]))
 
                                             if notes_to_tag:
-                                                anki.add_tags(list(set(notes_to_tag)), deletion_tag)
+                                                anki.add_tags(notes_to_tag, deletion_tag)
 
                                             # Create new cards
+                                            created_count = 0
                                             if new_cards_to_create:
                                                 # Get model info from reference card
                                                 model_name = ref_card.model_name
@@ -836,10 +848,11 @@ def main():
                                                             fields={"Front": new_card["front"], "Back": new_card["back"]},
                                                             tags=["ai-generated"],
                                                         )
+                                                        created_count += 1
                                                     except AnkiConnectError as e:
                                                         st.warning(f"Could not create card: {e}")
 
-                                            st.success(f"Applied changes: tagged {len(notes_to_tag)} cards, created {len(new_cards_to_create)} new cards")
+                                            st.success(f"✅ Done: Tagged {len(notes_to_tag)} cards with '{deletion_tag}', created {created_count} new cards")
                                             st.session_state["confirm_action"] = None
                                             st.session_state["agent_result"] = None
                                             st.rerun()
@@ -865,6 +878,156 @@ def main():
 
                     else:
                         st.info(f"No similar cards found above {similarity_threshold:.0%} threshold")
+
+                        # Single card AI analysis - available even without similar cards
+                        st.markdown("---")
+                        st.markdown("### 🤖 Single Card AI Analysis")
+                        st.markdown("Analyze and improve this card even without similar cards.")
+
+                        if st.button("🧠 Analyze & Improve Card", key="ai_single_card", type="secondary"):
+                            # Prepare single card for analysis
+                            single_card_for_analysis = [{
+                                "front": ref_card.front,
+                                "back": ref_card.back,
+                                "card_id": ref_card.card_id,
+                                "note_id": ref_card.note_id,
+                            }]
+                            st.session_state["agent_single_card"] = single_card_for_analysis
+                            st.session_state["agent_single_analyzing"] = True
+                            st.rerun()
+
+                        # Show single card analysis progress
+                        if st.session_state.get("agent_single_analyzing"):
+                            with st.spinner("🤖 AI Agent is analyzing the card..."):
+                                try:
+                                    llm = OpenRouterClient(model=st.session_state.get("llm_model", "google/gemini-2.0-flash-001"))
+                                    context = f"Deck: {deck}. Single card analysis - check quality and suggest improvements."
+                                    result = llm.evaluate_and_merge_cards(
+                                        st.session_state["agent_single_card"],
+                                        context=context
+                                    )
+                                    st.session_state["agent_single_result"] = result
+                                    st.session_state["agent_single_analyzing"] = False
+                                    st.rerun()
+                                except LLMError as e:
+                                    st.error(f"AI Agent Error: {e}")
+                                    st.session_state["agent_single_analyzing"] = False
+
+                        # Display single card analysis results
+                        if st.session_state.get("agent_single_result"):
+                            result = st.session_state["agent_single_result"]
+                            agent_card = st.session_state.get("agent_single_card", [{}])[0]
+
+                            st.success("**AI Analysis Complete**")
+                            st.markdown(f"📝 {result.get('analysis', 'Analysis completed.')}")
+
+                            # Card decision
+                            for decision in result.get("card_decisions", []):
+                                action = decision.get("action", "KEEP")
+                                reason = decision.get("reason", "")
+                                icon = {"DELETE": "🔴", "KEEP": "🟢", "MERGE": "🟡"}.get(action, "⚪")
+                                st.markdown(f"{icon} **{action}**: {reason}")
+
+                            # New improved cards
+                            new_cards_to_create = result.get("new_cards", [])
+                            if new_cards_to_create:
+                                st.markdown("#### 📝 Improved Card(s)")
+                                for i, new_card in enumerate(new_cards_to_create):
+                                    with st.expander(f"✨ Improved Card {i + 1}: {new_card['front'][:50]}...", expanded=True):
+                                        st.markdown(f"**Front:** {new_card['front']}")
+                                        st.markdown(f"**Back:** {new_card['back']}")
+                                        st.markdown(f"**Reason:** {new_card.get('reason', 'Improved version')}")
+
+                            # Apply changes section
+                            st.markdown("---")
+                            st.markdown("### Apply Changes")
+
+                            # Confirmation
+                            if st.session_state.get("confirm_action") == "apply_single_agent_changes":
+                                delete_decisions = [d for d in result.get("card_decisions", []) if d.get("action") in ["DELETE", "MERGE"]]
+
+                                # Check if original card should be tagged
+                                should_tag_original = len(delete_decisions) > 0 or len(new_cards_to_create) > 0
+                                cards_to_tag = 1 if should_tag_original else 0
+
+                                st.warning("⚠️ **Confirm AI Agent Changes**")
+
+                                changes_summary = f"""
+**The following changes will be made:**
+"""
+                                if should_tag_original:
+                                    changes_summary += f"""
+🔴 **Mark for Deletion:** Original card will be tagged with `{deletion_tag}`
+   - {agent_card['front'][:50]}...
+"""
+                                if new_cards_to_create:
+                                    changes_summary += f"""
+✨ **Create New Cards:** {len(new_cards_to_create)} improved card(s) will be created
+"""
+                                    for nc in new_cards_to_create[:3]:
+                                        changes_summary += f"\n   - {nc['front'][:40]}..."
+
+                                if should_tag_original:
+                                    changes_summary += f"""
+
+⚠️ Original card will be tagged `{deletion_tag}` for manual review before permanent deletion.
+"""
+                                else:
+                                    changes_summary += """
+✅ No changes needed - card is already good!
+"""
+
+                                st.markdown(changes_summary)
+
+                                col_apply, col_cancel = st.columns(2)
+                                with col_apply:
+                                    if st.button("✅ Yes, Apply Changes", key="confirm_apply_single", type="primary"):
+                                        try:
+                                            # Tag original card for deletion if needed
+                                            if should_tag_original:
+                                                anki.add_tags([agent_card["note_id"]], deletion_tag)
+
+                                            # Create new cards
+                                            created_count = 0
+                                            if new_cards_to_create:
+                                                model_name = ref_card.model_name
+                                                for new_card in new_cards_to_create:
+                                                    try:
+                                                        anki.add_note(
+                                                            deck_name=deck,
+                                                            model_name=model_name,
+                                                            fields={"Front": new_card["front"], "Back": new_card["back"]},
+                                                            tags=["ai-generated"],
+                                                        )
+                                                        created_count += 1
+                                                    except AnkiConnectError as e:
+                                                        st.warning(f"Could not create card: {e}")
+
+                                            if should_tag_original or created_count > 0:
+                                                st.success(f"✅ Done: Tagged original with '{deletion_tag}', created {created_count} new card(s)")
+                                            else:
+                                                st.success("✅ No changes were needed!")
+                                            st.session_state["confirm_action"] = None
+                                            st.session_state["agent_single_result"] = None
+                                            st.rerun()
+                                        except AnkiConnectError as e:
+                                            st.error(f"Error applying changes: {e}")
+
+                                with col_cancel:
+                                    if st.button("❌ No, Cancel", key="cancel_apply_single"):
+                                        st.session_state["confirm_action"] = None
+                                        st.rerun()
+                            else:
+                                col_apply_btn, col_clear_btn = st.columns(2)
+                                with col_apply_btn:
+                                    if st.button("✅ Apply AI Suggestions", key="apply_single", type="primary"):
+                                        st.session_state["confirm_action"] = "apply_single_agent_changes"
+                                        st.rerun()
+                                with col_clear_btn:
+                                    if st.button("🗑️ Clear Results", key="clear_single"):
+                                        st.session_state["agent_single_result"] = None
+                                        st.session_state["agent_single_card"] = None
+                                        st.rerun()
 
             else:
                 # Group All Cards Mode
@@ -996,21 +1159,38 @@ def main():
                                         delete_decisions = [d for d in result.get("card_decisions", []) if d.get("action") in ["DELETE", "MERGE"]]
                                         new_cards_list = result.get("new_cards", [])
 
-                                        st.warning(f"⚠️ Apply changes: tag {len(delete_decisions)} cards, create {len(new_cards_list)} new cards?")
+                                        # Collect ALL cards that should be tagged for deletion
+                                        cards_to_tag_indices = set()
+                                        for d in delete_decisions:
+                                            cards_to_tag_indices.add(d.get("card_index", 0))
+                                        for nc in new_cards_list:
+                                            for source_idx in nc.get("source_cards", []):
+                                                cards_to_tag_indices.add(source_idx)
+
+                                        cards_to_tag = [group_cards[idx] for idx in cards_to_tag_indices if idx < len(group_cards)]
+
+                                        st.warning("⚠️ **Confirm Group Changes**")
+                                        changes_msg = f"""
+**The following changes will be made:**
+
+🔴 **Mark for Deletion:** {len(cards_to_tag)} cards tagged with `{deletion_tag}`
+✨ **Create New Cards:** {len(new_cards_list)} improved cards
+
+⚠️ Old cards will be tagged for manual review before permanent deletion.
+"""
+                                        st.markdown(changes_msg)
+
                                         col_yes, col_no = st.columns(2)
                                         with col_yes:
-                                            if st.button("✅ Yes", key=f"confirm_group_{group_idx}", type="primary"):
+                                            if st.button("✅ Yes, Apply", key=f"confirm_group_{group_idx}", type="primary"):
                                                 try:
-                                                    # Tag for deletion
-                                                    notes_to_tag = []
-                                                    for d in delete_decisions:
-                                                        idx = d.get("card_index", 0)
-                                                        if idx < len(group_cards):
-                                                            notes_to_tag.append(group_cards[idx]["note_id"])
+                                                    # Tag ALL source cards for deletion
+                                                    notes_to_tag = list(set([c["note_id"] for c in cards_to_tag]))
                                                     if notes_to_tag:
-                                                        anki.add_tags(list(set(notes_to_tag)), deletion_tag)
+                                                        anki.add_tags(notes_to_tag, deletion_tag)
 
                                                     # Create new cards
+                                                    created_count = 0
                                                     if new_cards_list:
                                                         first_card = cards[group[0]]
                                                         for nc in new_cards_list:
@@ -1021,17 +1201,18 @@ def main():
                                                                     fields={"Front": nc["front"], "Back": nc["back"]},
                                                                     tags=["ai-generated"],
                                                                 )
+                                                                created_count += 1
                                                             except AnkiConnectError:
                                                                 pass
 
-                                                    st.success("Applied!")
+                                                    st.success(f"✅ Done: Tagged {len(notes_to_tag)} cards, created {created_count} new cards")
                                                     st.session_state["confirm_action"] = None
                                                     st.session_state[f"agent_group_{group_idx}_result"] = None
                                                     st.rerun()
                                                 except AnkiConnectError as e:
                                                     st.error(f"Error: {e}")
                                         with col_no:
-                                            if st.button("❌ No", key=f"cancel_group_{group_idx}"):
+                                            if st.button("❌ No, Cancel", key=f"cancel_group_{group_idx}"):
                                                 st.session_state["confirm_action"] = None
                                                 st.rerun()
                     else:

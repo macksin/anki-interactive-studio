@@ -123,7 +123,8 @@ def trigger_reload():
         "cards", "cards_df", "cluster_info",
         "selected_for_deletion", "agent_result", "agent_cards",
         "agent_card_indices", "agent_single_result", "agent_single_card",
-        "confirm_action", "group_selections"
+        "confirm_action", "group_selections",
+        "format_result", "formatting_card"
     ]
     for key in keys_to_clear:
         if key in st.session_state:
@@ -613,6 +614,104 @@ def main():
                         st.markdown(f"**Front:** {ref_card.front}")
                         st.markdown(f"**Back:** {ref_card.back}")
                         st.caption(f"Card ID: {ref_card.card_id} | Lapses: {ref_card.lapses} | Reviews: {ref_card.reps}")
+
+                    # Formatting Agent Section
+                    with st.expander("✨ Format Card", expanded=False):
+                        st.markdown("Reformat this card for better readability while keeping content intact.")
+
+                        format_style = st.radio(
+                            "Formatting Style",
+                            ["clean", "minimal", "structured"],
+                            horizontal=True,
+                            key="format_style",
+                            help="clean: semantic HTML | minimal: plain text | structured: organized with sections"
+                        )
+
+                        if st.button("🎨 Format Card", key="format_card_btn"):
+                            st.session_state["formatting_card"] = True
+                            st.rerun()
+
+                        # Show formatting progress
+                        if st.session_state.get("formatting_card"):
+                            with st.spinner("🎨 Formatting card..."):
+                                try:
+                                    llm = OpenRouterClient(model=st.session_state.get("llm_model", "google/gemini-2.0-flash-001"))
+                                    result = llm.format_card(
+                                        ref_card.front,
+                                        ref_card.back,
+                                        formatting_style=format_style
+                                    )
+                                    st.session_state["format_result"] = result
+                                    st.session_state["formatting_card"] = False
+                                    st.rerun()
+                                except LLMError as e:
+                                    st.error(f"Formatting Error: {e}")
+                                    st.session_state["formatting_card"] = False
+
+                        # Show formatting result
+                        if st.session_state.get("format_result"):
+                            result = st.session_state["format_result"]
+
+                            if result.get("error"):
+                                st.error(f"Error: {result['error']}")
+                            else:
+                                st.success("**Formatting Complete**")
+
+                                # Show changes
+                                changes = result.get("changes", [])
+                                if changes:
+                                    st.markdown("**Changes made:**")
+                                    for change in changes:
+                                        st.markdown(f"- {change}")
+                                else:
+                                    st.info("No changes needed - card is already well-formatted")
+
+                                # Show before/after comparison
+                                col_before, col_after = st.columns(2)
+
+                                with col_before:
+                                    st.markdown("**Before:**")
+                                    with st.container():
+                                        st.markdown(f"*Front:* {ref_card.front[:200]}...")
+                                        st.markdown(f"*Back:* {ref_card.back[:200]}...")
+
+                                with col_after:
+                                    st.markdown("**After:**")
+                                    with st.container():
+                                        st.markdown(f"*Front:* {result['front'][:200]}...")
+                                        st.markdown(f"*Back:* {result['back'][:200]}...")
+
+                                # Show full formatted content
+                                with st.expander("View Full Formatted Content", expanded=False):
+                                    st.markdown("**Formatted Front:**")
+                                    st.code(result["front"], language="html")
+                                    st.markdown("**Formatted Back:**")
+                                    st.code(result["back"], language="html")
+
+                                # Apply button
+                                st.markdown("---")
+                                col_apply, col_cancel = st.columns(2)
+
+                                with col_apply:
+                                    if st.button("✅ Apply Formatting", key="apply_format", type="primary"):
+                                        try:
+                                            # Update the note fields
+                                            anki.update_note_fields(
+                                                ref_card.note_id,
+                                                {"Front": result["front"], "Back": result["back"]}
+                                            )
+                                            st.success("✅ Card formatting applied!")
+                                            st.info("🔄 Reloading to reflect changes...")
+                                            st.session_state["format_result"] = None
+                                            trigger_reload()
+                                            st.rerun()
+                                        except AnkiConnectError as e:
+                                            st.error(f"Error applying format: {e}")
+
+                                with col_cancel:
+                                    if st.button("❌ Discard", key="discard_format"):
+                                        st.session_state["format_result"] = None
+                                        st.rerun()
 
                     # Find similar cards (excluding those already tagged for deletion)
                     similar_raw = find_similar_to_reference(

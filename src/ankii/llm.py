@@ -455,3 +455,137 @@ Important:
                 "error": str(e),
                 "raw_response": response,
             }
+
+    def format_card(
+        self,
+        front: str,
+        back: str,
+        formatting_style: str = "clean",
+    ) -> dict[str, Any]:
+        """Format a card while keeping content intact.
+
+        This agent specializes in reformatting cards for better readability
+        without changing the actual content/information.
+
+        Args:
+            front: The front of the card (question)
+            back: The back of the card (answer)
+            formatting_style: Style of formatting - "clean", "minimal", "structured"
+
+        Returns:
+            Dict with:
+            - front: Reformatted front
+            - back: Reformatted back
+            - changes: List of changes made
+            - preserved: Confirmation that content was preserved
+        """
+        import json
+
+        style_instructions = {
+            "clean": """
+- Use clean, semantic HTML (avoid inline styles when possible)
+- Use <b> for bold, <i> for italic
+- Use <br> for line breaks (not <br><br> repeatedly)
+- Use proper paragraph structure
+- Keep math in <anki-mathjax> tags
+- Remove redundant/broken HTML tags
+- Ensure all tags are properly closed
+- Use lists (<ul>, <ol>) for enumerated items""",
+            "minimal": """
+- Remove ALL HTML formatting except essential structure
+- Keep only <b> for key terms, <anki-mathjax> for math
+- Use plain text as much as possible
+- Remove colors, fonts, and styling
+- Keep content simple and readable""",
+            "structured": """
+- Use semantic HTML with clear structure
+- Add subtle styling for readability (light colors for notes)
+- Use <div> sections for logical groupings
+- Format code with <code> tags
+- Use <blockquote> for quotes/sources
+- Add proper spacing with CSS classes"""
+        }
+
+        prompt = f"""You are an expert at formatting Anki flashcards for optimal readability and learning.
+
+## Your Task
+Reformat this card while PRESERVING ALL CONTENT EXACTLY. Do not change any facts, terms, or information.
+
+## Current Card
+
+**Front:**
+```html
+{front}
+```
+
+**Back:**
+```html
+{back}
+```
+
+## Formatting Style: {formatting_style}
+{style_instructions.get(formatting_style, style_instructions["clean"])}
+
+## Rules
+1. NEVER change the actual content, facts, or meaning
+2. NEVER add or remove information
+3. NEVER translate or paraphrase
+4. Fix broken/unclosed HTML tags
+5. Improve visual structure and readability
+6. Keep all <anki-mathjax> content exactly as is
+7. Keep all links and sources intact
+8. Use consistent formatting patterns
+
+## Response Format
+Respond with ONLY valid JSON:
+```json
+{{
+    "front": "<reformatted front HTML>",
+    "back": "<reformatted back HTML>",
+    "changes": [
+        "<brief description of change 1>",
+        "<brief description of change 2>"
+    ],
+    "preserved": true
+}}
+```
+
+Important:
+- The "preserved" field must be true only if you kept all content intact
+- List all formatting changes you made
+- If the card is already well-formatted, return it unchanged with empty changes array"""
+
+        response = self._chat([{"role": "user", "content": prompt}])
+
+        # Parse JSON response
+        try:
+            text = response.strip()
+            # Handle markdown code blocks
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+
+            result = json.loads(text.strip())
+
+            # Validate response
+            if "front" not in result:
+                result["front"] = front
+            if "back" not in result:
+                result["back"] = back
+            if "changes" not in result:
+                result["changes"] = []
+            if "preserved" not in result:
+                result["preserved"] = True
+
+            return result
+
+        except json.JSONDecodeError as e:
+            return {
+                "front": front,
+                "back": back,
+                "changes": [],
+                "preserved": True,
+                "error": str(e),
+                "raw_response": response,
+            }

@@ -481,79 +481,201 @@ Important:
         """
         import json
 
+        # Few-shot examples for consistent formatting
+        few_shot_examples = '''
+## Example 1: Technical card with math
+
+**BEFORE Front:**
+```html
+Para maximizar a qualidade do modelo ao fazer fine-tuning com <b>LoRA</b> (como demonstrado no paper QLoRA), quais módulos/camadas devem ser alvo (target modules)?
+```
+
+**BEFORE Back:**
+```html
+<b>Todas as camadas lineares</b> (All linear layers).
+    <br><br>
+    Isso inclui tanto os blocos de <b>Atenção</b> (<anki-mathjax>W_q, W_k, W_v, W_o</anki-mathjax>) quanto os blocos <b>MLP/FFN</b> (como de&gt;up_proj, de&gt;down_proj, de&gt;gate_proj).
+    <br><br>
+    <div style="font-size: 0.8em; color: #666;">
+      Obs: O artigo original focava apenas em Atenção, mas trabalhos subsequentes (Dettmers et al.) mostraram que incluir MLPs aproxima o desempenho do fine-tuning completo (Full Finetuning).<br>
+      Fonte: <a href="https://arxiv.org/abs/2305.14314">QLoRA: Efficient Finetuning of Quantized LLMs</a>
+</div>
+```
+
+**AFTER Front:**
+```html
+Para maximizar a qualidade do modelo ao fazer fine-tuning com <b>LoRA</b> (como demonstrado no paper QLoRA), quais módulos/camadas devem ser alvo (target modules)?
+```
+
+**AFTER Back:**
+```html
+<b>Todas as camadas lineares</b> (All linear layers).
+<br><br>
+Isso inclui tanto os blocos de <b>Atenção</b> (<anki-mathjax>W_q, W_k, W_v, W_o</anki-mathjax>) quanto os blocos <b>MLP/FFN</b> (como up_proj, down_proj, gate_proj).
+<br><br>
+<small>Obs: O artigo original focava apenas em Atenção, mas trabalhos subsequentes (Dettmers et al.) mostraram que incluir MLPs aproxima o desempenho do fine-tuning completo (Full Finetuning).</small>
+<br>
+<small>Fonte: <a href="https://arxiv.org/abs/2305.14314">QLoRA: Efficient Finetuning of Quantized LLMs</a></small>
+```
+
+**Changes:** Removed unnecessary indentation, fixed HTML entities (de&gt; → plain text), replaced inline div styles with semantic <small> tags, ensured proper tag closure.
+
+---
+
+## Example 2: Math-heavy card
+
+**BEFORE Front:**
+```html
+What is the gradient of the loss function <anki-mathjax>L = \\frac{1}{2}(y - \\hat{y})^2</anki-mathjax> with respect to <anki-mathjax>\\hat{y}</anki-mathjax>?
+```
+
+**BEFORE Back:**
+```html
+<anki-mathjax>\\frac{\\partial L}{\\partial \\hat{y}} = -(y - \\hat{y}) = \\hat{y} - y</anki-mathjax><br><br>This is the error term used in backpropagation.
+```
+
+**AFTER Front:**
+```html
+What is the gradient of the loss function <anki-mathjax>L = \\frac{1}{2}(y - \\hat{y})^2</anki-mathjax> with respect to <anki-mathjax>\\hat{y}</anki-mathjax>?
+```
+
+**AFTER Back:**
+```html
+<anki-mathjax>\\frac{\\partial L}{\\partial \\hat{y}} = -(y - \\hat{y}) = \\hat{y} - y</anki-mathjax>
+<br><br>
+This is the error term used in backpropagation.
+```
+
+**Changes:** Added line break for readability, kept all anki-mathjax content exactly as-is.
+
+---
+
+## Example 3: List-based card
+
+**BEFORE Front:**
+```html
+What are the 3 main types of machine learning?
+```
+
+**BEFORE Back:**
+```html
+1. <b>Supervised Learning</b> - learns from labeled data<br>2. <b>Unsupervised Learning</b> - finds patterns in unlabeled data<br>3. <b>Reinforcement Learning</b> - learns through trial and error with rewards
+```
+
+**AFTER Front:**
+```html
+What are the 3 main types of machine learning?
+```
+
+**AFTER Back:**
+```html
+<ol>
+<li><b>Supervised Learning</b> - learns from labeled data</li>
+<li><b>Unsupervised Learning</b> - finds patterns in unlabeled data</li>
+<li><b>Reinforcement Learning</b> - learns through trial and error with rewards</li>
+</ol>
+```
+
+**Changes:** Converted numbered list from br-separated to proper <ol>/<li> structure.
+
+---
+
+## Example 4: Code card
+
+**BEFORE Front:**
+```html
+How do you define a Python function that takes *args and **kwargs?
+```
+
+**BEFORE Back:**
+```html
+def my_function(*args, **kwargs):
+    for arg in args:
+        print(arg)
+    for key, value in kwargs.items():
+        print(f"{key}: {value}")
+```
+
+**AFTER Front:**
+```html
+How do you define a Python function that takes <code>*args</code> and <code>**kwargs</code>?
+```
+
+**AFTER Back:**
+```html
+<pre><code>def my_function(*args, **kwargs):
+    for arg in args:
+        print(arg)
+    for key, value in kwargs.items():
+        print(f"{key}: {value}")</code></pre>
+```
+
+**Changes:** Wrapped code terms in front with <code>, wrapped code block in back with <pre><code>.
+'''
+
         style_instructions = {
             "clean": """
-- Use clean, semantic HTML (avoid inline styles when possible)
-- Use <b> for bold, <i> for italic
-- Use <br> for line breaks (not <br><br> repeatedly)
-- Use proper paragraph structure
-- Keep math in <anki-mathjax> tags
-- Remove redundant/broken HTML tags
-- Ensure all tags are properly closed
-- Use lists (<ul>, <ol>) for enumerated items""",
+Style: CLEAN
+- Use semantic HTML: <b>, <i>, <code>, <small>, <ol>/<ul>/<li>
+- Single <br> for line breaks, <br><br> only between paragraphs
+- NO inline styles (no style="...")
+- Keep <anki-mathjax>...</anki-mathjax> content EXACTLY as-is (don't touch the LaTeX inside)
+- Use <pre><code> for code blocks
+- Use <small> for notes/sources instead of div with font-size
+- Proper indentation (no random spaces)
+- All tags must be closed""",
             "minimal": """
-- Remove ALL HTML formatting except essential structure
-- Keep only <b> for key terms, <anki-mathjax> for math
-- Use plain text as much as possible
-- Remove colors, fonts, and styling
-- Keep content simple and readable""",
+Style: MINIMAL
+- Remove ALL styling, colors, fonts
+- Keep only: <b> for key terms, <anki-mathjax> for math, <br> for breaks
+- Plain text as much as possible
+- Keep <anki-mathjax>...</anki-mathjax> content EXACTLY as-is
+- No lists, no code blocks, just simple text""",
             "structured": """
-- Use semantic HTML with clear structure
-- Add subtle styling for readability (light colors for notes)
-- Use <div> sections for logical groupings
-- Format code with <code> tags
-- Use <blockquote> for quotes/sources
-- Add proper spacing with CSS classes"""
+Style: STRUCTURED
+- Use semantic sections with <div class="...">
+- Use <blockquote> for sources/quotes
+- Use <details><summary> for expandable content
+- Keep <anki-mathjax>...</anki-mathjax> content EXACTLY as-is
+- Use CSS classes instead of inline styles
+- Organize content hierarchically"""
         }
 
-        prompt = f"""You are an expert at formatting Anki flashcards for optimal readability and learning.
+        prompt = f"""You are an expert Anki card formatter. Your job is to clean up HTML formatting while PRESERVING ALL CONTENT EXACTLY.
 
-## Your Task
-Reformat this card while PRESERVING ALL CONTENT EXACTLY. Do not change any facts, terms, or information.
+## CRITICAL RULES
+1. **NEVER change content** - same words, same facts, same meaning
+2. **NEVER touch anki-mathjax** - copy <anki-mathjax>...</anki-mathjax> blocks exactly as-is, including all backslashes
+3. **NEVER translate** - keep the original language
+4. **Fix HTML issues** - close unclosed tags, remove broken entities, fix structure
 
-## Current Card
+{few_shot_examples}
 
-**Front:**
+---
+
+## NOW FORMAT THIS CARD
+
+{style_instructions.get(formatting_style, style_instructions["clean"])}
+
+**Input Front:**
 ```html
 {front}
 ```
 
-**Back:**
+**Input Back:**
 ```html
 {back}
 ```
 
-## Formatting Style: {formatting_style}
-{style_instructions.get(formatting_style, style_instructions["clean"])}
-
-## Rules
-1. NEVER change the actual content, facts, or meaning
-2. NEVER add or remove information
-3. NEVER translate or paraphrase
-4. Fix broken/unclosed HTML tags
-5. Improve visual structure and readability
-6. Keep all <anki-mathjax> content exactly as is
-7. Keep all links and sources intact
-8. Use consistent formatting patterns
-
-## Response Format
-Respond with ONLY valid JSON:
+Respond with ONLY this JSON (no other text):
 ```json
 {{
-    "front": "<reformatted front HTML>",
-    "back": "<reformatted back HTML>",
-    "changes": [
-        "<brief description of change 1>",
-        "<brief description of change 2>"
-    ],
+    "front": "<formatted front>",
+    "back": "<formatted back>",
+    "changes": ["change 1", "change 2"],
     "preserved": true
 }}
-```
-
-Important:
-- The "preserved" field must be true only if you kept all content intact
-- List all formatting changes you made
-- If the card is already well-formatted, return it unchanged with empty changes array"""
+```"""
 
         response = self._chat([{"role": "user", "content": prompt}])
 
